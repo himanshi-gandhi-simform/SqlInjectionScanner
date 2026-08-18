@@ -6,6 +6,7 @@ obj/
 appsettings.Development.json
 .env
 
-# Generated audit reports — keep the folder, ignore the output
+# Generated audit reports — keep the folder and the format sample, ignore the output
 reports/*.md
 !reports/.gitkeep
+!reports/SAMPLE-REPORT.md

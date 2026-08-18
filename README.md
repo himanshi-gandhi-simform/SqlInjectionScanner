@@ -98,14 +98,21 @@ Findings carry **severity** (how bad if real) and **confidence** (how sure it is
 *separately*. A Critical/Low means "confirm this now"; a Low/High means "real, fix it next
 sprint". Collapsing the two is how reports become unactionable.
 
-**Phase 2 — Reproduce.** Every High and Medium gets a concrete attacker input, the
-resulting SQL, and a standalone snippet. Proofs are benign (`@@version`, `1=1`) —
-demonstrating reachability, not causing damage. An unprovable finding gets its confidence
-lowered and the blocker stated.
+**Phase 2 — Prove.** Every High and Medium gets an `Input:` / `Yields:` pair — the literal
+attacker value and the resulting SQL, so the structural break is visible in two lines.
+Proofs are benign (`@@version`, `1=1`): demonstrating reachability, not causing damage. An
+unprovable finding gets its confidence lowered and the blocker stated.
 
-**Phase 3 — Fix.** Before/After patches ordered by severity, matching the stack found in
-Phase 0, each with an effort rating (Trivial / Moderate / Invasive). Where binding cannot
-apply, the fix is an allow-list and says so explicitly.
+**Phase 3 — Fix.** Corrected code matching the stack found in Phase 0, with an effort
+rating (Trivial / Moderate / Invasive). Where binding cannot apply, the fix is an
+allow-list and says so explicitly.
+
+### Report shape
+
+The report is deliberately compact — a work order, not an essay. It opens with a
+**total-issue table**, then gives each finding *issue → why it matters → how to fix* in
+about 15 lines. See [`reports/SAMPLE-REPORT.md`](reports/SAMPLE-REPORT.md) for the exact
+format.
 
 ### Guardrails
 

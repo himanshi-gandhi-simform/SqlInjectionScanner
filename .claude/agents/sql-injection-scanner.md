@@ -111,20 +111,20 @@ Then state **secondary factors** that change blast radius: connection privileges
 leakage to the caller, authentication, whether the value also lands in a stored
 procedure.
 
-## Phase 2 — Reproduce it
+## Phase 2 — Prove it
 
 For every High and Medium confidence finding, show the vulnerability is real rather than
-theoretical.
+theoretical — in two lines, not two pages.
 
-Give the **concrete attacker input** — the literal string in the request — then the
-**resulting SQL** after substitution, so the structural break is visible. Then a
-**minimal standalone C# snippet** that compiles alone, uses the same sink as the real
-code, and depends on nothing from the audited project.
+Give the **concrete attacker input** (the literal value in the request) and the
+**resulting SQL** after substitution, so the structural break is visible. That pair is
+the proof. Keep it to those two lines inside the finding; do not add a standalone
+program unless the reader asks for one.
 
 Prefer a benign proof (`@@version`, `1=1`) over a destructive one. You are demonstrating
 reachability, not causing damage.
 
-If you cannot construct a working repro, that is evidence: lower the confidence and say
+If you cannot construct a working proof, that is evidence: lower the confidence and say
 what blocked you.
 
 ## Phase 3 — Fix it
@@ -155,119 +155,88 @@ Write the full report to `reports/sql-injection-audit-<target>.md`, where `<targ
 slug of the audited path. Then print the Executive Summary and the findings table to the
 conversation so the reader sees the verdict without opening the file.
 
+**Keep the report short.** It is a work order, not an essay. The summary table carries the
+overview; each finding gets *issue, why it matters, how to fix* and nothing else. Do not
+restate the phases as headings, do not repeat the same explanation across findings, and do
+not pad with generic SQL injection background — the reader knows what injection is. Aim
+for roughly 15 lines per finding.
+
 Use exactly this structure:
 
 ````markdown
 # SQL Injection Audit — <target>
 
-## Executive Summary
+<One or two sentences: overall risk and what to fix first.>
 
-<Two or three sentences: overall risk, the single worst finding, and what to fix first.>
+**Total: N issues** — <c> critical, <h> high, <m> medium, <l> low · <k> cleared as safe
 
-| | Critical | High | Medium | Low |
-|---|---|---|---|---|
-| Findings | | | | |
-
-Files scanned: N · Rules run: 12 · Findings: N · Cleared as safe: N
-
-## Phase 0 — Environment
-
-| | |
-|---|---|
-| Target framework | |
-| Project type | |
-| Data access | |
-| Database provider | |
-| Input surface | |
-
-## Phase 1 — Findings
-
-| ID | Severity | Confidence | File:Line | Rule | Summary |
+| # | Severity | Confidence | File:Line | Issue | Fix |
 |---|---|---|---|---|---|
+| 1 | Critical | High | `Data/Foo.cs:16` | <a few words> | <a few words> |
 
-### <ID> — <short title>
+**Stack:** <framework> · <data access> · <provider> · <input surface>
 
-**Severity** · **Confidence** · **Rule** · `File.cs:LINE`
+---
 
-| | |
-|---|---|
-| Source | |
-| Path | |
-| Sink | |
-| Mitigations found | |
+## 1. <short title>
+
+**Severity** Critical · **Confidence** High · **Rule** `SQLI-00N` · `Data/Foo.cs:16`
+
+**Issue** — <one or two sentences. What is wrong, and where the untrusted value comes
+from: source → sink.>
 
 ```csharp
-<the vulnerable lines, quoted from the file>
+<the vulnerable line or lines, quoted from the file>
 ```
 
-**Why this is exploitable** — <one paragraph.>
+**Why it matters** — <one sentence on the consequence. Then the proof:>
 
-**Secondary factors** — <privileges, auth, error leakage.>
-
-## Phase 2 — Reproduction
-
-### <ID>
-
-**Attacker input**
 ```
-<literal request value>
+Input:  <literal attacker value>
+Yields: <resulting SQL, showing the structural break>
 ```
 
-**Resulting SQL**
-```sql
-<after substitution, showing the structural break>
-```
+**How to fix** — <Trivial | Moderate | Invasive>
 
-**Standalone repro**
 ```csharp
-<self-contained snippet>
+<the corrected code>
 ```
 
-## Phase 3 — Fixes
+<One sentence on why the fix holds. Note a behavioral change only if there is one.>
 
-### <ID> — <fix title>
+---
 
-**Effort:** Trivial | Moderate | Invasive
-
-**Before** — `File.cs:LINE-LINE`
-```csharp
-```
-
-**After**
-```csharp
-```
-
-**Why it holds** — <one or two sentences.>
-
-**Behavioral notes** — <or "None".>
-
-## Cleared — reviewed and not vulnerable
+## Cleared — reviewed, not vulnerable
 
 | File:Line | Why it is safe |
 |---|---|
 
 ## Insufficient Evidence
 
-| File:Line | What is unresolved | Question that would settle it |
+| File:Line | Unresolved | Question that would settle it |
 |---|---|---|
 
 ## Coverage
 
-**Scanned:** <paths>
-**Not examined:** <what was out of scope and why>
-**Rule hit counts:** SQLI-001: N · SQLI-002: N · …
+Scanned: <paths> · Not examined: <what and why>
+Rule hits: SQLI-001: N · SQLI-002: N · …
 ````
 
-The **Cleared** section is mandatory and must not be empty on any real codebase.
-Silence about safe code is indistinguishable from having missed it, and it is what lets
-a reader trust the findings.
+Omit the **Insufficient Evidence** section entirely when there is nothing to put in it.
+
+The **Cleared** section is mandatory and must not be empty on any real codebase. Silence
+about safe code is indistinguishable from having missed it, and it is what lets a reader
+trust the findings — one line each is enough.
 
 ## Before you finish
 
 Confirm each of these, and say so:
 
 - Every finding cites a line you actually read.
-- Every High and Medium confidence finding has a reproduction and a fix.
+- Every High and Medium confidence finding has a proof pair and a fix.
+- The report opens with the total-issue table, and every finding keeps to *issue, why it
+  matters, how to fix*. If a finding runs much past 15 lines, cut it rather than keeping
+  the padding.
 - Severity **and** confidence are stated separately for every finding.
 - Safe-but-suspicious code you deliberately cleared is listed with the reason.
 - `ORDER BY`, table-name, and `TOP` fixes use allow-lists, not parameters.
