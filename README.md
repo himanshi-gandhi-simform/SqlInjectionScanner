@@ -7,10 +7,30 @@ proof-of-concept that measures whether it actually works.
 
 | Document | Purpose |
 |---|---|
-| [`COMMANDS.md`](COMMANDS.md) | Every command — setup, build, run, verify, troubleshoot |
 | [`REMEDIATION.md`](REMEDIATION.md) | The 12 patterns: what the issue is and how to fix it |
+| [`reports/SAMPLE-REPORT.md`](reports/SAMPLE-REPORT.md) | What a generated report looks like |
 | [`verification/VERIFY.md`](verification/VERIFY.md) | How to score a run |
 | [`verification/EXPECTED_FINDINGS.md`](verification/EXPECTED_FINDINGS.md) | Ground truth — **do not show the agent** |
+
+---
+
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [Prerequisites](#prerequisites)
+- [Setup and build](#setup-and-build)
+- [Run the audit](#run-the-audit)
+- [Verify the run](#verify-the-run)
+- [Use the agent on your own repository](#use-the-agent-on-your-own-repository)
+- [Layout](#layout)
+- [How the agent works](#how-the-agent-works)
+- [Detection rules](#detection-rules)
+- [The POC target](#the-poc-target)
+- [Grading](#grading)
+- [Maintenance commands](#maintenance-commands)
+- [Troubleshooting](#troubleshooting)
+- [Command reference](#command-reference)
+- [Limitations](#limitations)
 
 ---
 
@@ -32,27 +52,203 @@ seeded flaws — that gap is the argument.
 
 ---
 
-## Quick start
+## Prerequisites
+
+> Windows PowerShell 5.1 does not support `&&`. Every command below is a single command
+> for that reason — chain with `;` if you need to combine them.
+
+Check the SDK. Needs 10.0.100 or later:
+
+```bash
+dotnet --version
+```
+
+List all installed SDKs if that is not what you expected:
+
+```bash
+dotnet --list-sdks
+```
+
+Confirm Claude Code is available:
+
+```bash
+claude --version
+```
+
+No database and no connection string are required. The sample is analyzed, never
+executed.
+
+---
+
+## Setup and build
+
+Clone and enter the repository:
+
+```bash
+git clone <your-repository-url> SqlInjectionScanner
+```
+
+```bash
+cd SqlInjectionScanner
+```
+
+Restore packages:
+
+```bash
+dotnet restore VulnerableShop.sln
+```
+
+Build:
 
 ```bash
 dotnet build VulnerableShop.sln
 ```
 
-Open the repository root in Claude Code. The agent is discovered from `.claude/agents/`.
-In a **fresh session**, ask:
+**Expected:** `Build succeeded` with **1 warning** — `EF1003` on
+`EfCoreCustomerRepository.cs:14`.
+
+That warning is correct and must not be suppressed. It is the compiler independently
+confirming one of the seeded flaws, which corroborates part of the answer key.
+
+Confirm it is present and on the expected line:
+
+```bash
+dotnet build VulnerableShop.sln --nologo 2>&1 | Select-String "EF1003"
+```
+
+Build quietly, showing only warnings and errors:
+
+```bash
+dotnet build VulnerableShop.sln -v q --nologo
+```
+
+---
+
+## Run the audit
+
+Open the repository root in Claude Code. The agent is discovered automatically from
+`.claude/agents/`.
+
+Start a **fresh session**, then ask:
 
 ```
 Use the sql-injection-scanner agent to audit src/VulnerableShop.Api
 ```
 
+> **Keep `verification/` out of that session.** It holds the answer key. If the agent
+> reads it, the run proves nothing — start a new session.
+
 The report is written to `reports/sql-injection-audit-vulnerableshop-api.md`, with the
-executive summary printed to the conversation. Score it with
-[`verification/VERIFY.md`](verification/VERIFY.md).
+executive summary and findings table printed to the conversation.
 
-> **Keep `verification/` out of that session.** It contains the answer key. If the agent
-> reads it, the run proves nothing.
+### Other useful prompts
 
-Full command reference in [`COMMANDS.md`](COMMANDS.md).
+Audit a narrower path:
+
+```
+Use the sql-injection-scanner agent to audit src/VulnerableShop.Api/Data
+```
+
+Re-check only what you just fixed:
+
+```
+Use the sql-injection-scanner agent to re-audit src/VulnerableShop.Api/Data/DapperOrderRepository.cs and confirm the previous findings are resolved
+```
+
+List generated reports:
+
+```bash
+Get-ChildItem reports -Filter *.md
+```
+
+---
+
+## Verify the run
+
+Score the report against [`verification/VERIFY.md`](verification/VERIFY.md) — 14 true
+positives, 5 decoys.
+
+Confirm the agent modified nothing it audited:
+
+```bash
+git status --porcelain
+```
+
+Expect empty output, or only a new file under `reports/`. **Any change under `src/` is a
+hard fail.**
+
+Prove the source tree is byte-for-byte unchanged:
+
+```bash
+git diff --exit-code -- src
+```
+
+Exit code 0 means clean. Non-zero means the agent wrote to the code under audit,
+violating its own rules.
+
+### Check determinism
+
+The same codebase must produce the same report twice. Run the audit again in a second
+fresh session, save under a different name, then compare:
+
+```bash
+git diff --no-index reports\run-1.md reports\run-2.md
+```
+
+Finding IDs that appear, vanish, or reorder between runs mean the agent is leaning on
+intuition where the rule table should be driving it.
+
+### Check the fixture is uncontaminated
+
+Count the SQL sinks the sweep should find. Expect **14**:
+
+```bash
+(Get-ChildItem src -Recurse -Filter *.cs | Select-String -Pattern "FromSqlRaw|ExecuteSqlRaw|CommandText|QueryAsync|ExecuteAsync").Count
+```
+
+Note the `Get-ChildItem -Recurse` pipe rather than a `src\**\*.cs` path. PowerShell 5.1
+does not expand `**` reliably — it silently matches part of the tree, which is worse than
+failing because the count still looks plausible.
+
+Confirm no answer-key markers leaked into the sample. This must return **0**:
+
+```bash
+(Get-ChildItem src -Recurse -Filter *.cs | Select-String -CaseSensitive -Pattern "VULNERABLE|SQLI-|EXPECTED FINDING|DECOY").Count
+```
+
+`-CaseSensitive` is required. Without it the `VulnerableShop` namespace matches
+`VULNERABLE` on 26 lines and the check appears to fail when the fixture is fine.
+
+Inspect the decisive decoy pair — unsafe `FromSqlRaw` on line 14, safe `FromSql` on
+line 21:
+
+```bash
+Get-Content src\VulnerableShop.Api\Data\EfCoreCustomerRepository.cs | Select-Object -Skip 12 -First 12
+```
+
+---
+
+## Use the agent on your own repository
+
+Create the agents folder in the target repository if it does not exist:
+
+```bash
+New-Item -ItemType Directory -Force -Path C:\path\to\your-repo\.claude\agents
+```
+
+Copy the agent definition across:
+
+```bash
+Copy-Item .claude\agents\sql-injection-scanner.md C:\path\to\your-repo\.claude\agents\ -Force
+```
+
+Open that repository in Claude Code and ask for the audit, naming your path:
+
+```
+Use the sql-injection-scanner agent to audit src/YourProject
+```
+
+The agent has no dependency on this sample.
 
 ---
 
@@ -70,9 +266,8 @@ Full command reference in [`COMMANDS.md`](COMMANDS.md).
 │  │  ├─ EfCoreCustomerRepository.cs  EF Core      — 3 flaws, 1 decoy
 │  │  └─ ReportQueryBuilder.cs        Dynamic SQL  — 4 flaws
 │  └─ Services/AuditService.cs      Second-order — 1 flaw, 1 decoy
-├─ reports/                         Agent output
+├─ reports/                         Agent output + format sample
 ├─ verification/                    Answer key and scoring
-├─ COMMANDS.md
 ├─ REMEDIATION.md
 └─ VulnerableShop.sln
 ```
@@ -111,8 +306,7 @@ allow-list and says so explicitly.
 
 The report is deliberately compact — a work order, not an essay. It opens with a
 **total-issue table**, then gives each finding *issue → why it matters → how to fix* in
-about 15 lines. See [`reports/SAMPLE-REPORT.md`](reports/SAMPLE-REPORT.md) for the exact
-format.
+about 15 lines. See [`reports/SAMPLE-REPORT.md`](reports/SAMPLE-REPORT.md).
 
 ### Guardrails
 
@@ -127,15 +321,11 @@ format.
 
 The agent has `Read`, `Grep`, `Glob`, and `Write`. `Write` exists so it can save its
 report; the instruction restricting it to `reports/` is the only thing keeping it out of
-your source, so **verify rather than trust**:
+your source, so **verify rather than trust** with `git diff --exit-code -- src`.
 
-```bash
-git diff --exit-code -- src
-```
-
-Exit code 0 means the audited code is untouched. For a hard guarantee instead of an
-instructed one, delete `Write` from the agent's frontmatter — it will then print the
-report rather than save it, and becomes structurally incapable of modifying anything.
+For a hard guarantee instead of an instructed one, delete `Write` from the agent's
+frontmatter — it will then print the report rather than save it, and becomes structurally
+incapable of modifying anything.
 
 ---
 
@@ -227,6 +417,100 @@ keeps reading the reports; a tool at 100% recall and 50% precision gets muted in
 
 It also catches 1 of 14. Nothing on Dapper, raw ADO.NET, `ORDER BY`, dynamic table names,
 or second-order taint.
+
+---
+
+## Maintenance commands
+
+Delete generated reports:
+
+```bash
+Remove-Item reports\*.md -Exclude SAMPLE-REPORT.md -Force
+```
+
+Discard any accidental change to the sample app:
+
+```bash
+git checkout -- src
+```
+
+Clean build output:
+
+```bash
+dotnet clean VulnerableShop.sln
+```
+
+Remove `bin`/`obj` entirely if a build behaves strangely:
+
+```bash
+Get-ChildItem -Path src -Include bin,obj -Recurse -Directory | Remove-Item -Recurse -Force
+```
+
+---
+
+## Troubleshooting
+
+**`NU1605` package downgrade**
+
+EF Core 10 requires `Microsoft.Data.SqlClient` ≥ 6.1.1. Inspect the resolved graph:
+
+```bash
+dotnet list src\VulnerableShop.Api\VulnerableShop.Api.csproj package --include-transitive
+```
+
+**`Could not find solution or directory VulnerableShop.sln`**
+
+.NET 10 creates `.slnx` by default. This repo uses classic `.sln`. If regenerating:
+
+```bash
+dotnet new sln -n VulnerableShop --format sln
+```
+
+```bash
+dotnet sln VulnerableShop.sln add src\VulnerableShop.Api\VulnerableShop.Api.csproj
+```
+
+**EF1003 warning on build** — expected and correct. It is the compiler flagging the real
+`FromSqlRaw` flaw on line 14.
+
+**The agent does not appear** — it is discovered relative to the folder you opened.
+Confirm the file is where Claude Code expects it:
+
+```bash
+Get-ChildItem .claude\agents
+```
+
+Open the repository root itself, not a parent directory.
+
+**Report was not written** — the agent needs `reports/` to exist:
+
+```bash
+New-Item -ItemType Directory -Force -Path reports
+```
+
+**Restore fails behind a proxy**
+
+```bash
+dotnet nuget list source
+```
+
+---
+
+## Command reference
+
+| Task | Command |
+|---|---|
+| Check SDK | `dotnet --version` |
+| Restore | `dotnet restore VulnerableShop.sln` |
+| Build | `dotnet build VulnerableShop.sln` |
+| Confirm EF1003 | `dotnet build VulnerableShop.sln --nologo 2>&1 \| Select-String "EF1003"` |
+| Run audit | Ask in Claude Code: `Use the sql-injection-scanner agent to audit src/VulnerableShop.Api` |
+| Prove source untouched | `git diff --exit-code -- src` |
+| Count sinks (expect 14) | `(Get-ChildItem src -Recurse -Filter *.cs \| Select-String -Pattern "FromSqlRaw\|ExecuteSqlRaw\|CommandText\|QueryAsync\|ExecuteAsync").Count` |
+| Fixture clean (expect 0) | `(Get-ChildItem src -Recurse -Filter *.cs \| Select-String -CaseSensitive -Pattern "VULNERABLE\|SQLI-\|EXPECTED FINDING\|DECOY").Count` |
+| List reports | `Get-ChildItem reports -Filter *.md` |
+| Reset reports | `Remove-Item reports\*.md -Exclude SAMPLE-REPORT.md -Force` |
+| Clean | `dotnet clean VulnerableShop.sln` |
 
 ---
 
